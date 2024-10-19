@@ -4,7 +4,7 @@ const bodyParser = require('body-parser');
 const mongoose = require('mongoose');
 const nodemailer = require('nodemailer');
 const randomize = require('randomatic');
-require('dotenv').config;
+require('dotenv').config();
 
 const app = express();
 const PORT = 3001;
@@ -13,15 +13,102 @@ app.use(bodyParser.json());
 app.use(cors());
 
 // Connect to MongoDB:
-const user = process.env.DATABASE_USER;
-const password = process.env.DATABASE_PASSWORD;
-const cluster = process.env.DATABASE_CLUSTER;
-const uri = `mongodb+srv://${user}:${password}@${cluster}.ait53.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0`
-mongoose.connect(``);
+const dbUser = process.env.DATABASE_USER;
+const dbPassword = process.env.DATABASE_PASSWORD;
+const dbCluster = process.env.DATABASE_CLUSTER;
 
+const uri = `mongodb+srv://${dbUser}:${dbPassword}@${dbCluster}.ait53.mongodb.net/?retryWrites=true&w=majority&appName=${dbCluster}`
+
+mongoose.set("strictQuery", false);
+
+main().catch((err) => console.log(err));
+async function main() {
+    await mongoose.connect(uri);
+}
+
+// User Model for Mongoose: 
 const User = mongoose.model('User', {
     email: String,
     password: String,
     otp: String,
 });
 
+// Function to send OTP to the user's email: 
+async function sendOtpEmail(email, otp) {
+    try {
+        const transporter = nodemailer.createTransport({
+            service: 'gmail',
+            auth: {
+                user: process.env.MY_EMAIL,
+                pass: process.env.MY_PASS,
+            },
+        });
+
+        const mailOptions = {
+            from: process.env.MY_EMAIL,
+            to: email,
+            subject: 'OTP Verification',
+            text: `Your OTP is: ${otp}`,
+        };
+
+        const info = await transporter.sendMail(mailOptions);
+        console.log('Email sent: ' + info.response);
+    } catch (error) {
+        console.error('Error sending email: ', error);
+    }
+};
+
+app.post('/auth/login', async (req, res) => {
+    const { email, password } = req.body;
+    console.log(req.body);
+
+    try {
+        const user = await User.findOne({ email, password });
+        console.log(user);
+
+        if (!user) {
+            return res.json({
+                success: false,
+                message: 'Invalid credentials'
+            })
+        };
+
+        const generatedOtp = randomize('0', 6);
+        user.otp = generatedOtp;
+        await user.save();
+
+        sendOtpEmail(email, generatedOtp);
+
+        return res.json({ success: true });
+    } catch (error) {
+        console.error('Error during login: ' + error.message);
+        return res.status(500).json({
+            success: false,
+            message: 'An error occurred during login.'
+        });
+    }
+});
+
+app.post('/auth/verify-otp', async (req, res) => {
+    const { otp } = req.body;
+
+    try {
+        const user = await User.findOne({ otp });
+
+        if (!user) {
+            return res.json({ success: false, message: 'Invalid OTP' });
+        }
+
+        user.otp = '';
+        await user.save();
+
+        return res.json({ success: true });
+    } catch (error) {
+        console.error('Error during OTP verification: ', error.message);
+        return res.status(500).json({ success: false, message: 'An error occurred during OTP verification.' });
+    }
+});
+
+app.listen(PORT, () => {
+    console.log(`Server is running on http://localhost:${PORT}`);
+});
